@@ -1,0 +1,65 @@
+.tableWrap {
+    width: 100%;
+    overflow-x: auto;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--font-size-sm);
+}
+
+.th {
+    padding: var(--space-3) var(--space-4);
+    background: var(--color-bg-elevated);
+    color: var(--color-text-muted);
+    font-weight: 600;
+    font-size: var(--font-size-xs);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+}
+
+.tr {
+    border-bottom: 1px solid var(--color-border);
+    transition: background-color var(--transition-fast);
+}
+
+.tr:last-child {
+    border-bottom: none;
+}
+
+.tr:hover {
+    background: var(--color-bg-elevated);
+}
+
+.td {
+    padding: var(--space-3) var(--space-4);
+    color: var(--color-text);
+    vertical-align: middle;
+}
+
+/* Loading skeletons */
+.loadingWrap {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-2);
+}
+
+.skeleton {
+    height: 40px;
+    background: linear-gradient(90deg, var(--color-bg-elevated) 25%, var(--color-border) 50%, var(--color-bg-elevated) 75%);
+    background-size: 200% 100%;
+    border-radius: var(--radius-md);
+    animation: shimmer 1.2s infinite;
+}
+
+@keyframes shimmer {
+    to {
+        background-position: -200% 0;
+    }
+}
