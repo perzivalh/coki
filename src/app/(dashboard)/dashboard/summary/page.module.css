@@ -1,0 +1,180 @@
+.container {
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    color: #fff;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+.header {
+    margin-bottom: 2rem;
+}
+
+.title {
+    font-size: 1.8rem;
+    font-weight: 700;
+}
+
+.subtitle {
+    color: #94a3b8;
+    margin-top: 0.5rem;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3rem;
+}
+
+@media (max-width: 900px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.card {
+    background: #0f172a;
+    border: 1px solid #1e293b;
+    border-radius: 12px;
+    padding: 1.5rem;
+}
+
+.sectionTitle {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+}
+
+.field {
+    margin-bottom: 1.5rem;
+}
+
+.label {
+    display: block;
+    font-size: 0.95rem;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    color: #cbd5e1;
+}
+
+.timeInput {
+    background: #1e293b;
+    border: 1px solid #334155;
+    color: #fff;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 1rem;
+    width: 100%;
+}
+
+.timeInput:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+.checkboxList {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    background: #1e293b;
+    padding: 1.25rem;
+    border-radius: 8px;
+    border: 1px solid #334155;
+    margin-bottom: 2rem;
+}
+
+.checkboxRow {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: pointer;
+}
+
+.checkboxRow input {
+    width: 1.2rem;
+    height: 1.2rem;
+    accent-color: #3b82f6;
+    cursor: pointer;
+}
+
+.checkboxLabel {
+    font-size: 0.95rem;
+    color: #f1f5f9;
+}
+
+/* WhatsApp Preview Simulation */
+.waPreview {
+    background: #efeae2;
+    /* WhatsApp wallpaper color */
+    border-radius: 16px;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 500px;
+}
+
+.waHeader {
+    background: #075e54;
+    color: #fff;
+    padding: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    font-weight: 600;
+}
+
+.waAvatar {
+    width: 40px;
+    height: 40px;
+    background: #128c7e;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+}
+
+.waBody {
+    flex: 1;
+    padding: 1.5rem;
+    overflow-y: auto;
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" opacity="0.05"><text x="10" y="50" font-size="20">🌸</text><text x="60" y="80" font-size="20">⭐</text><text x="80" y="20" font-size="20">✨</text></svg>');
+}
+
+.waMessage {
+    background: #fff;
+    color: #111b21;
+    padding: 0.5rem 0.5rem 0.5rem 0.75rem;
+    border-radius: 0.5rem;
+    border-top-left-radius: 0;
+    max-width: 85%;
+    font-size: 0.95rem;
+    line-height: 1.4;
+    position: relative;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+}
+
+.waMessage::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: -10px;
+    border-top: 10px solid #fff;
+    border-left: 10px solid transparent;
+}
+
+.waMessage pre {
+    white-space: pre-wrap;
+    font-family: inherit;
+    margin: 0;
+}
+
+.waFooter {
+    font-size: 0.7rem;
+    color: #667781;
+    text-align: right;
+    margin-top: 0.25rem;
+}

@@ -1,0 +1,135 @@
+.shell {
+    display: flex;
+    min-height: 100vh;
+    background: var(--color-bg);
+}
+
+/* Sidebar */
+.sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--color-bg-surface);
+    border-right: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    z-index: 50;
+    padding: var(--space-5) 0;
+}
+
+.sidebarTop {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+}
+
+.brand {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: 0 var(--space-5);
+}
+
+.brandLogo {
+    font-size: 1.75rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.brandName {
+    font-size: var(--font-size-sm);
+    font-weight: 700;
+    color: var(--color-text);
+    line-height: 1.2;
+}
+
+.brandSub {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+}
+
+.nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: 0 var(--space-3);
+}
+
+.navItem {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-md);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    color: var(--color-text-muted);
+    transition: background var(--transition-fast), color var(--transition-fast);
+    text-decoration: none;
+}
+
+.navItem:hover {
+    background: var(--color-bg-elevated);
+    color: var(--color-text);
+}
+
+.navItemActive {
+    background: var(--color-accent-muted);
+    color: var(--color-accent);
+}
+
+.navIcon {
+    font-size: 1rem;
+    flex-shrink: 0;
+}
+
+.sidebarBottom {
+    padding: var(--space-4) var(--space-5);
+    border-top: 1px solid var(--color-border);
+}
+
+.ownerName {
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    color: var(--color-text);
+}
+
+.ownerEmail {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+}
+
+/* Content area */
+.content {
+    margin-left: 220px;
+    flex: 1;
+    padding: var(--space-8);
+    min-height: 100vh;
+    overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+    .sidebar {
+        width: 60px;
+    }
+
+    .brandName,
+    .brandSub,
+    .ownerName,
+    .ownerEmail {
+        display: none;
+    }
+
+    .navItem span:last-child {
+        display: none;
+    }
+
+    .content {
+        margin-left: 60px;
+        padding: var(--space-4);
+    }
+}

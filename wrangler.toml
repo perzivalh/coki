@@ -1,0 +1,9 @@
+name = "coki"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".vercel/output/static"
+
+[vars]
+# Production vars are set in the Cloudflare Pages dashboard.
+# This section is only used as documentation / local dev reference.
+# NEXT_PUBLIC_APP_URL = "https://coki.pages.dev"

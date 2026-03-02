@@ -35,6 +35,9 @@ yarn-error.log*
 .env.example
 *.md
 
+# Wrangler local secrets
+.dev.vars
+
 # vercel
 .vercel
 

@@ -9,7 +9,7 @@
 
 .card {
     width: 100%;
-    max-width: 380px;
+    max-width: 420px;
     background: var(--color-bg-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-lg);
@@ -17,40 +17,81 @@
     box-shadow: var(--shadow-lg);
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: var(--space-8);
 }
 
 .brand {
+    text-align: center;
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: var(--space-2);
-    text-align: center;
 }
 
-.logo {
-    font-size: 3rem;
-    line-height: 1;
+.logoBox {
+    width: 56px;
+    height: 56px;
+    background: var(--color-accent-muted);
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.75rem;
+    margin-bottom: var(--space-2);
 }
 
-.title {
-    font-size: var(--font-size-3xl);
+.appName {
+    font-size: var(--font-size-xl);
     font-weight: 700;
     color: var(--color-text);
-    letter-spacing: -0.02em;
 }
 
-.subtitle {
+.appSub {
+    font-size: var(--font-size-sm);
+    color: var(--color-text-muted);
+}
+
+.pinSection {
+    width: 100%;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+}
+
+.pinTitle {
+    font-size: var(--font-size-2xl);
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.pinHint {
     font-size: var(--font-size-sm);
     color: var(--color-text-muted);
 }
 
 .form {
+    width: 100%;
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: var(--space-4);
+}
+
+.attemptsWarning {
+    font-size: var(--font-size-xs);
+    color: var(--color-danger);
 }
 
 .submitBtn {
     width: 100%;
+    margin-top: var(--space-2);
+}
+
+.footer {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-subtle);
+    text-align: center;
 }

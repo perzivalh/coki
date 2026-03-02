@@ -27,10 +27,9 @@ export function Modal({ open, onClose, title, children, footer, size = "md" }: M
     return (
         <div className={styles.overlay} role="dialog" aria-modal="true" aria-label={title}>
             <div
-                className={styles.overlay}
                 aria-hidden="true"
                 onClick={onClose}
-                style={{ position: "absolute", inset: 0 }}
+                style={{ position: "absolute", inset: 0, cursor: "pointer" }}
             />
             <div className={`${styles.panel} ${styles[`panel--${size}`]}`} ref={ref}>
                 <div className={styles.header}>
