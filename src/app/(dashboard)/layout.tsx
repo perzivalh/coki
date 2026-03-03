@@ -1,17 +1,8 @@
-// Dashboard layout — wraps all dashboard pages with AppShell and auth guard
-import { redirect } from "next/navigation";
-import { cookies } from "next/headers";
+// Dashboard layout — wraps all dashboard pages with AppShell
+// Auth guard is handled by src/middleware.ts (Edge runtime, required for Cloudflare Pages)
 import { AppShell } from "@/ui";
 import "@/ui/styles/variables.css";
 
-async function getSession() {
-    const cookieStore = await cookies();
-    return cookieStore.get("coki_session")?.value ?? null;
-}
-
-export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-    const token = await getSession();
-    if (!token) redirect("/login");
-
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
     return <AppShell>{children}</AppShell>;
 }
