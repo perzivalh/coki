@@ -4,17 +4,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { ingestWhatsAppMessage } from "@/application/use-cases/ingest-whatsapp-message";
 import type { WhatsAppPayload } from "@/application/use-cases/ingest-whatsapp-message";
 import { SupabaseMessageRepository } from "@/infrastructure/db/supabase/message.repository";
-import { handleFinanceMessage } from "@/skills/finance/finance.skill";
-import { handleConfirmationMessage } from "@/application/services/handle-confirmation";
-import { DraftManager } from "@/application/services/draft-manager";
 import { SupabaseDraftTransactionRepository } from "@/infrastructure/db/supabase/draft-transaction.repository";
-import { SupabaseTransactionRepository } from "@/infrastructure/db/supabase/transaction.repository";
+import { ConversationOrchestrator } from "@/application/services/conversation-orchestrator";
+import { DraftManager } from "@/application/services/draft-manager";
+import { completeDraftTransaction } from "@/application/services/draft-finalizer";
 import {
     SupabaseCategoryRepository,
     SupabaseAccountRepository,
 } from "@/infrastructure/db/supabase/category-account.repository";
+import { SupabaseAccountBalanceRepository } from "@/infrastructure/db/supabase/account-balance.repository";
 import { sendWhatsAppMessage } from "@/application/services/whatsapp-sender";
-import { sendInteractiveButtons } from "@/application/services/whatsapp-interactive";
 import { supabaseService } from "@/infrastructure/db/supabase/client";
 
 export const runtime = "nodejs";
@@ -69,7 +68,7 @@ export async function POST(req: NextRequest) {
 
             // CASE 2: Audio message
             if (msg.type === "audio") {
-                await handleMediaMessage("audio", msg.audio?.id ?? "", from, inboundMessageId);
+                await handleMediaMessage("audio", msg.audio?.id ?? "", from);
                 await supabaseService
                     .from("inbound_messages")
                     .update({ skill: "finance-draft" })
@@ -79,7 +78,7 @@ export async function POST(req: NextRequest) {
 
             // CASE 3: Image message
             if (msg.type === "image") {
-                await handleMediaMessage("image", msg.image?.id ?? "", from, inboundMessageId);
+                await handleMediaMessage("image", msg.image?.id ?? "", from);
                 await supabaseService
                     .from("inbound_messages")
                     .update({ skill: "finance-draft" })
@@ -91,30 +90,12 @@ export async function POST(req: NextRequest) {
             if (msg.type !== "text" || !msg.text?.body) continue;
             const text = msg.text.body.trim();
 
-            // Abandon any pending draft and start fresh with new message
-            const draftRepo = new SupabaseDraftTransactionRepository();
-            const pendingDraft = await draftRepo.findPendingForUser();
-            if (pendingDraft) {
-                await draftRepo.markAbandoned(pendingDraft.id);
-                await sendWhatsAppMessage(from, "Proceso tu nuevo mensaje.");
-            }
-
-            // Check SI/NO confirmation for budget-exceeded transaction
-            const handledAsConfirmation = await handleConfirmationMessage(text, from);
-            if (handledAsConfirmation) {
-                await supabaseService
-                    .from("inbound_messages")
-                    .update({ skill: "finance-confirmation" })
-                    .eq("wa_message_id", msg.id);
-                continue;
-            }
-
+            const orchestrator = new ConversationOrchestrator();
+            const intent = await orchestrator.process({ text, from, inboundMessageId });
             await supabaseService
                 .from("inbound_messages")
-                .update({ skill: "finance" })
+                .update({ skill: `conversation:${intent}` })
                 .eq("wa_message_id", msg.id);
-
-            await handleFinanceMessage({ text, from, inboundMessageId });
         }
     } catch (err) {
         console.error("[WhatsApp] Error processing webhook:", err);
@@ -142,6 +123,46 @@ async function handleInteractiveReply(
     if (!selectedId) return;
 
     const draftRepo = new SupabaseDraftTransactionRepository();
+
+    if (selectedId === "new_transaction") {
+        const pending = await draftRepo.findPendingForUser(from);
+        if (pending) await draftRepo.markAbandoned(pending.id);
+        await sendWhatsAppMessage(from, "Listo. Enviame el nuevo gasto o ingreso.");
+        return;
+    }
+
+    if (selectedId === "continue_pending") {
+        const context = await draftRepo.findByStepContext(from);
+        if (!context) {
+            await sendWhatsAppMessage(from, "No hay registro pendiente para continuar.");
+            return;
+        }
+        const manager = new DraftManager(
+            draftRepo,
+            new SupabaseCategoryRepository(),
+            new SupabaseAccountRepository(),
+        );
+        await manager.resendQuestion(context.draft, context.step, from);
+        return;
+    }
+
+    if (selectedId.startsWith("balance_")) {
+        const accountId = selectedId.replace("balance_", "");
+        const accountRepo = new SupabaseAccountRepository();
+        const account = await accountRepo.findById(accountId);
+        if (!account) {
+            await sendWhatsAppMessage(from, "No encontre esa cuenta.");
+            return;
+        }
+        const balanceRepo = new SupabaseAccountBalanceRepository();
+        const balance = await balanceRepo.findByAccountId(accountId);
+        await sendWhatsAppMessage(
+            from,
+            `Saldo ${account.name}: ${Number(balance?.balance_bs ?? 0).toFixed(2)} Bs`,
+        );
+        return;
+    }
+
     const context = await draftRepo.findByStepContext(from);
 
     if (!context) {
@@ -157,11 +178,7 @@ async function handleInteractiveReply(
     const result = await draftManager.handleReply(draft, step, selectedId, from);
 
     if ("completed" in result && result.completed) {
-        const txRepo = new SupabaseTransactionRepository();
-        await txRepo.create({
-            ...result.transactionInput,
-            inbound_message_id: inboundMessageId,
-        });
+        await completeDraftTransaction(result.transactionInput, from, inboundMessageId);
     }
 }
 
@@ -169,34 +186,10 @@ async function handleMediaMessage(
     kind: "audio" | "image",
     providerMediaId: string,
     from: string,
-    _inboundMessageId: string,
 ): Promise<void> {
-    const draftRepo = new SupabaseDraftTransactionRepository();
-
-    const existing = await draftRepo.findPendingForUser();
-    if (existing) await draftRepo.markAbandoned(existing.id);
-
-    const draft = await draftRepo.create({
-        raw_input: `${kind}:${providerMediaId}`,
-        parsed_json: {},
-        missing_fields: ["type", "amount", "category", "account"],
-    });
-
-    await supabaseService.from("attachments").insert({
-        draft_id: draft.id,
-        kind,
-        provider_media_id: providerMediaId,
-    });
-
-    await draftRepo.addPendingStep(draft.id, "ask_type", { from });
-
-    const label = kind === "audio" ? "audio" : "foto";
-    await sendInteractiveButtons(
+    console.log(`[WhatsApp] ${kind} ignored for now, providerMediaId=${providerMediaId}`);
+    await sendWhatsAppMessage(
         from,
-        `Recibi tu ${label}. Es un gasto o ingreso?`,
-        [
-            { id: "expense", title: "Gasto" },
-            { id: "income", title: "Ingreso" },
-        ],
+        "Por ahora proceso solo texto. Enviame el gasto o ingreso escrito y lo registro.",
     );
 }

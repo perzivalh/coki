@@ -18,6 +18,7 @@ export interface Transaction {
     occurred_at: string;
     created_at: string;
     inbound_message_id: string | null;
+    from_number: string | null;
     status: TransactionStatus;
     bucket: TransactionBucket;
     exceeded_daily: boolean;

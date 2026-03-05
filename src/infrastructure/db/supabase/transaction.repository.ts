@@ -23,6 +23,7 @@ export class SupabaseTransactionRepository implements ITransactionRepository {
                 source: input.source,
                 occurred_at: input.occurred_at ?? new Date().toISOString(),
                 inbound_message_id: input.inbound_message_id ?? null,
+                from_number: input.from_number ?? null,
                 status: input.status ?? "confirmed",
                 bucket: input.bucket ?? "free",
                 exceeded_daily: input.exceeded_daily ?? false,
@@ -62,6 +63,20 @@ export class SupabaseTransactionRepository implements ITransactionRepository {
             .from("transactions")
             .select()
             .eq("source", source)
+            .eq("status", "pending")
+            .order("occurred_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error) return null;
+        return data as Transaction | null;
+    }
+
+    async findLatestPendingForSourceAndSender(source: string, from: string): Promise<Transaction | null> {
+        const { data, error } = await supabaseService
+            .from("transactions")
+            .select()
+            .eq("source", source)
+            .eq("from_number", from)
             .eq("status", "pending")
             .order("occurred_at", { ascending: false })
             .limit(1)

@@ -6,6 +6,7 @@ import { supabaseService } from "./client";
 export class SupabaseDraftTransactionRepository implements IDraftTransactionRepository {
     async create(input: {
         raw_input?: string;
+        from_number?: string | null;
         parsed_json?: Record<string, unknown>;
         missing_fields: string[];
     }): Promise<DraftTransaction> {
@@ -13,6 +14,7 @@ export class SupabaseDraftTransactionRepository implements IDraftTransactionRepo
             .from("draft_transactions")
             .insert({
                 raw_input: input.raw_input ?? null,
+                from_number: input.from_number ?? null,
                 parsed_json: input.parsed_json ?? null,
                 missing_fields: input.missing_fields,
                 status: "pending",
@@ -23,10 +25,11 @@ export class SupabaseDraftTransactionRepository implements IDraftTransactionRepo
         return data as DraftTransaction;
     }
 
-    async findPendingForUser(): Promise<DraftTransaction | null> {
+    async findPendingForUser(from: string): Promise<DraftTransaction | null> {
         const { data, error } = await supabaseService
             .from("draft_transactions")
             .select("*")
+            .eq("from_number", from)
             .eq("status", "pending")
             .gt("expires_at", new Date().toISOString())
             .order("created_at", { ascending: false })

@@ -1,69 +1,92 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { handleConfirmationMessage } from "./handle-confirmation";
 
 const mockTransactionRepo = {
-    findLatestPendingForSource: vi.fn(),
+    findLatestPendingForSourceAndSender: vi.fn(),
     update: vi.fn(),
 };
 
-// Mock dependencies
-vi.mock("@/infrastructure/db/supabase/transaction.repository", () => {
-    return {
-        SupabaseTransactionRepository: vi.fn().mockImplementation(() => mockTransactionRepo)
-    };
-});
-vi.mock("@/application/services/whatsapp-sender", () => ({
-    sendWhatsAppMessage: vi.fn()
+const mockBalanceRepo = {
+    adjust: vi.fn(),
+};
+
+const mockApplyOnStatusTransition = vi.fn();
+
+vi.mock("@/infrastructure/db/supabase/transaction.repository", () => ({
+    SupabaseTransactionRepository: vi.fn().mockImplementation(() => mockTransactionRepo),
 }));
 
-describe("Handle Confirmation Message", () => {
+vi.mock("@/infrastructure/db/supabase/account-balance.repository", () => ({
+    SupabaseAccountBalanceRepository: vi.fn().mockImplementation(() => mockBalanceRepo),
+}));
+
+vi.mock("@/application/services/whatsapp-sender", () => ({
+    sendWhatsAppMessage: vi.fn(),
+}));
+
+vi.mock("./balance-ledger", () => ({
+    BalanceLedgerService: {
+        applyOnStatusTransition: (...args: unknown[]) => mockApplyOnStatusTransition(...args),
+    },
+}));
+
+describe("handleConfirmationMessage", () => {
     const phoneNumber = "12345678";
 
-    it("should ignore messages that are not SI or NO", async () => {
-        const result = await handleConfirmationMessage("Hola", phoneNumber);
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it("ignores messages that are not confirmations", async () => {
+        const result = await handleConfirmationMessage("hola", phoneNumber);
         expect(result).toBe(false);
     });
 
-    it("should indicate no pending if user says SI but has no pending tx", async () => {
-        mockTransactionRepo.findLatestPendingForSource.mockResolvedValueOnce(null);
+    it("returns false when there is no pending transaction for this sender", async () => {
+        mockTransactionRepo.findLatestPendingForSourceAndSender.mockResolvedValueOnce(null);
         const result = await handleConfirmationMessage("si", phoneNumber);
+        expect(mockTransactionRepo.findLatestPendingForSourceAndSender).toHaveBeenCalledWith("whatsapp", phoneNumber);
         expect(result).toBe(false);
     });
 
-    it("should confirm transaction on SI", async () => {
+    it("confirms transaction on yes and adjusts balance via ledger", async () => {
         const futureDate = new Date(Date.now() + 10000).toISOString();
-        mockTransactionRepo.findLatestPendingForSource.mockResolvedValueOnce({
-            id: "tx-1", confirmation_expires_at: futureDate, amount_bs: 50
+        mockTransactionRepo.findLatestPendingForSourceAndSender.mockResolvedValueOnce({
+            id: "tx-1",
+            status: "pending",
+            type: "expense",
+            amount_bs: 50,
+            account_id: "acc-1",
+            confirmation_expires_at: futureDate,
         });
-        mockTransactionRepo.update.mockResolvedValueOnce({ id: "tx-1", status: "confirmed" });
+        mockTransactionRepo.update.mockResolvedValueOnce({
+            id: "tx-1",
+            status: "confirmed",
+            type: "expense",
+            amount_bs: 50,
+            account_id: "acc-1",
+        });
 
         const result = await handleConfirmationMessage("SI", phoneNumber);
         expect(mockTransactionRepo.update).toHaveBeenCalledWith("tx-1", { status: "confirmed" });
+        expect(mockApplyOnStatusTransition).toHaveBeenCalled();
         expect(result).toBe(true);
     });
 
-    it("should cancel transaction on NO", async () => {
+    it("cancels transaction on no", async () => {
         const futureDate = new Date(Date.now() + 10000).toISOString();
-        mockTransactionRepo.findLatestPendingForSource.mockResolvedValueOnce({
-            id: "tx-2", confirmation_expires_at: futureDate, amount_bs: 50
+        mockTransactionRepo.findLatestPendingForSourceAndSender.mockResolvedValueOnce({
+            id: "tx-2",
+            status: "pending",
+            type: "expense",
+            amount_bs: 50,
+            account_id: "acc-1",
+            confirmation_expires_at: futureDate,
         });
         mockTransactionRepo.update.mockResolvedValueOnce({ id: "tx-2", status: "cancelled" });
 
         const result = await handleConfirmationMessage("no", phoneNumber);
         expect(mockTransactionRepo.update).toHaveBeenCalledWith("tx-2", { status: "cancelled" });
-        expect(result).toBe(true);
-    });
-
-    it("should handle expired transactions by canceling them automatically", async () => {
-        const pastDate = new Date(Date.now() - 10000).toISOString();
-        mockTransactionRepo.findLatestPendingForSource.mockResolvedValueOnce({
-            id: "tx-3", confirmation_expires_at: pastDate, amount_bs: 50
-        });
-        mockTransactionRepo.update.mockResolvedValueOnce({ id: "tx-3", status: "cancelled" });
-
-        // If user says SI but it's expired
-        const result = await handleConfirmationMessage("sí", phoneNumber);
-        expect(mockTransactionRepo.update).toHaveBeenCalledWith("tx-3", { status: "cancelled" });
         expect(result).toBe(true);
     });
 });

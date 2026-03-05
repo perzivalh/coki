@@ -5,6 +5,7 @@ export type StepType = "ask_type" | "ask_category" | "ask_account" | "confirm";
 export interface DraftTransaction {
     id: string;
     raw_input: string | null;
+    from_number: string | null;
     parsed_json: Record<string, unknown> | null;
     missing_fields: string[];
     status: DraftStatus;

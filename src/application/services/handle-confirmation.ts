@@ -1,41 +1,47 @@
-// Application Service: Handle WhatsApp Confirmations
 import { SupabaseTransactionRepository } from "@/infrastructure/db/supabase/transaction.repository";
+import { SupabaseAccountBalanceRepository } from "@/infrastructure/db/supabase/account-balance.repository";
 import { sendWhatsAppMessage } from "@/application/services/whatsapp-sender";
+import { isNegativeConfirmation, isPositiveConfirmation } from "./conversation-intent";
+import { BalanceLedgerService } from "./balance-ledger";
 
 export async function handleConfirmationMessage(text: string, from: string): Promise<boolean> {
-    const normalized = text.trim().toLowerCase();
-    const isYes = normalized === "si" || normalized === "sí";
-    const isNo = normalized === "no";
-
-    if (!isYes && !isNo) {
-        return false; // Not a confirmation message
-    }
+    const isYes = isPositiveConfirmation(text);
+    const isNo = isNegativeConfirmation(text);
+    if (!isYes && !isNo) return false;
 
     const txRepo = new SupabaseTransactionRepository();
-    const pendingTx = await txRepo.findLatestPendingForSource("whatsapp");
+    const pendingTx = await txRepo.findLatestPendingForSourceAndSender("whatsapp", from);
+    if (!pendingTx) return false;
 
-    if (!pendingTx) {
-        return false; // No pending transaction found
-    }
-
-    // Check expiration
     if (pendingTx.confirmation_expires_at) {
         const expiresAt = new Date(pendingTx.confirmation_expires_at).getTime();
-        const now = new Date().getTime();
-        if (now > expiresAt) {
+        if (Date.now() > expiresAt) {
             await txRepo.update(pendingTx.id, { status: "cancelled" });
-            await sendWhatsAppMessage(from, "⏳ La solicitud de confirmación ha expirado. Gasto cancelado.");
+            await sendWhatsAppMessage(from, "La confirmacion expiro. Transaccion cancelada.");
             return true;
         }
     }
 
     if (isYes) {
-        await txRepo.update(pendingTx.id, { status: "confirmed" });
-        await sendWhatsAppMessage(from, `✅ Confirmado. Gasto de ${pendingTx.amount_bs.toFixed(2)} Bs guardado (excediendo límites).`);
-    } else {
-        await txRepo.update(pendingTx.id, { status: "cancelled" });
-        await sendWhatsAppMessage(from, "🚫 Gasto cancelado. No se sumará a los totales.");
+        const updated = await txRepo.update(pendingTx.id, { status: "confirmed" });
+        try {
+            const balanceRepo = new SupabaseAccountBalanceRepository();
+            await BalanceLedgerService.applyOnStatusTransition(
+                pendingTx,
+                updated,
+                balanceRepo,
+            );
+        } catch (err) {
+            console.error("[Confirmation] Failed to adjust balance:", err);
+        }
+        await sendWhatsAppMessage(
+            from,
+            `Confirmado. ${updated.type === "income" ? "Ingreso" : "Gasto"} de ${updated.amount_bs.toFixed(2)} Bs guardado.`,
+        );
+        return true;
     }
 
-    return true; // Handled
+    await txRepo.update(pendingTx.id, { status: "cancelled" });
+    await sendWhatsAppMessage(from, "Transaccion cancelada.");
+    return true;
 }

@@ -7,6 +7,7 @@ import {
 } from "@/infrastructure/db/supabase/category-account.repository";
 import type { CreateTransactionInput } from "@/domain/contracts/finance";
 import { SupabaseAccountBalanceRepository } from "@/infrastructure/db/supabase/account-balance.repository";
+import { BalanceLedgerService } from "@/application/services/balance-ledger";
 
 export const runtime = "nodejs";
 
@@ -73,8 +74,7 @@ export async function POST(req: NextRequest) {
     // Adjust account balance
     try {
         const balanceRepo = new SupabaseAccountBalanceRepository();
-        const delta = body.type === "expense" ? -body.amount_bs : body.amount_bs;
-        await balanceRepo.adjust(body.account_id, delta);
+        await BalanceLedgerService.applyOnCreate(tx, balanceRepo);
     } catch (e) {
         console.error("[Transactions API] Failed to adjust account balance:", e);
     }

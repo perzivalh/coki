@@ -18,6 +18,7 @@ export interface CreateTransactionInput {
     source: "whatsapp" | "web";
     occurred_at?: string;
     inbound_message_id?: string | null;
+    from_number?: string | null;
     status?: TransactionStatus;
     bucket?: TransactionBucket;
     exceeded_daily?: boolean;
@@ -77,6 +78,7 @@ export interface ITransactionRepository {
     update(id: string, input: UpdateTransactionInput): Promise<Transaction>;
     findById(id: string): Promise<Transaction | null>;
     findLatestPendingForSource(source: string): Promise<Transaction | null>;
+    findLatestPendingForSourceAndSender(source: string, from: string): Promise<Transaction | null>;
     list(input: ListTransactionsInput): Promise<ListTransactionsResult>;
     getSummary(range: "today" | "month", timezone: string, bucket?: TransactionBucket): Promise<FinanceSummary>;
     getCurrentSpend(timezone: string): Promise<{ today_bs: number; month_bs: number; month_by_category_bs: Record<string, number> }>;
@@ -142,8 +144,8 @@ export interface IAccountBalanceRepository {
 }
 
 export interface IDraftTransactionRepository {
-    create(input: { raw_input?: string; parsed_json?: Record<string, unknown>; missing_fields: string[] }): Promise<DraftTransaction>;
-    findPendingForUser(): Promise<DraftTransaction | null>;
+    create(input: { raw_input?: string; from_number?: string | null; parsed_json?: Record<string, unknown>; missing_fields: string[] }): Promise<DraftTransaction>;
+    findPendingForUser(from: string): Promise<DraftTransaction | null>;
     updateParsed(id: string, parsed_json: Record<string, unknown>, missing_fields: string[]): Promise<DraftTransaction>;
     markComplete(id: string): Promise<DraftTransaction>;
     markAbandoned(id: string): Promise<DraftTransaction>;

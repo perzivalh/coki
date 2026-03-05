@@ -1,145 +1,305 @@
-// Application Service: Finance Parser
-// Strategy 1: Cerebras AI context-aware (receives real categories+accounts, returns direct IDs)
-// Strategy 2: Regex fallback (always available)
+import { extractAmountCandidate, normalizeTextEsBo } from "./conversation-intent";
+
+export interface ParseReferenceItem {
+    id: string;
+    name: string;
+    slug: string;
+}
+
+export interface ParsedFinanceV2 {
+    type: "expense" | "income" | null;
+    amount_bs: number | null;
+    category_slug: string | null;
+    account_slug: string | null;
+    note: string | null;
+    confidence: number;
+    reason: string;
+    used_ai: boolean;
+}
+
+export interface ParseFinanceOptions {
+    model?: string;
+    systemPrompt?: string;
+}
 
 export interface AIDecision {
     type: "expense" | "income";
     amount_bs: number | null;
-    category_id: string | null;  // direct DB id, not a hint
-    account_id: string | null;   // direct DB id, only set if explicitly mentioned
+    category_id: string | null;
+    account_id: string | null;
     note: string | null;
     used_ai: boolean;
 }
 
-// Keywords for regex fallback
-const INCOME_KEYWORDS = ["ingreso", "cobré", "cobre", "recibí", "recibi", "cobrado", "sueldo", "pago recibido", "entró", "entro"];
-const QR_KEYWORDS = ["qr", "pago qr", "transferencia", "transfer"];
+const INCOME_KEYWORDS = [
+    "ingreso",
+    "cobre",
+    "cobrado",
+    "recibi",
+    "sueldo",
+    "me pagaron",
+    "pago recibido",
+    "entro",
+];
 
-/**
- * Regex-based fallback. Returns null for category_id and account_id so the
- * draft flow will ask interactively.
- * Also exported as parseWithRegex for tests.
- */
-export function parseWithRegex(text: string): AIDecision {
-    return parseWithRegexFallback(text);
+const ACCOUNT_ALIASES: Record<string, string[]> = {
+    cash: ["efectivo", "cash", "billete"],
+    qr: ["qr", "transferencia", "transfer", "banco", "tarjeta"],
+};
+
+function clampConfidence(confidence: number): number {
+    if (!Number.isFinite(confidence)) return 0;
+    return Math.max(0, Math.min(1, confidence));
 }
 
-function parseWithRegexFallback(text: string): AIDecision {
-    const cleaned = text.trim().toLowerCase();
-    const isIncome = INCOME_KEYWORDS.some((kw) => cleaned.includes(kw));
-    const amountMatch = cleaned.match(/(\d+(?:[.,]\d{1,2})?)/);
-    const amount_bs = amountMatch ? parseFloat(amountMatch[1].replace(",", ".")) : null;
+function guessType(normalized: string): "expense" | "income" | null {
+    if (INCOME_KEYWORDS.some((keyword) => normalized.includes(keyword))) return "income";
+    if (normalized.length > 0) return "expense";
+    return null;
+}
 
-    let note = cleaned;
-    if (amountMatch) note = note.replace(amountMatch[0], "");
-    INCOME_KEYWORDS.forEach((kw) => (note = note.replace(kw, "")));
-    QR_KEYWORDS.forEach((kw) => (note = note.replace(kw, "")));
-    note = note.replace(/\s+/g, " ").trim();
+function stripForNote(text: string): string {
+    return text.replace(/\s+/g, " ").trim();
+}
+
+function slugFromTextMatch(text: string, items: ParseReferenceItem[], aliases?: Record<string, string[]>): string | null {
+    const normalized = normalizeTextEsBo(text);
+    let best: { slug: string; score: number } | null = null;
+
+    for (const item of items) {
+        const itemName = normalizeTextEsBo(item.name);
+        const itemSlug = normalizeTextEsBo(item.slug);
+        const tokens = new Set<string>([itemName, itemSlug]);
+        for (const alias of aliases?.[item.slug] ?? []) tokens.add(normalizeTextEsBo(alias));
+
+        let score = 0;
+        for (const token of tokens) {
+            if (!token) continue;
+            if (normalized === token) score = Math.max(score, 1);
+            else if (normalized.includes(` ${token} `) || normalized.startsWith(`${token} `) || normalized.endsWith(` ${token}`)) score = Math.max(score, 0.85);
+            else if (token.length >= 4 && normalized.includes(token)) score = Math.max(score, 0.7);
+        }
+
+        if (!best || score > best.score) {
+            best = { slug: item.slug, score };
+        }
+    }
+
+    if (!best || best.score < 0.7) return null;
+    return best.slug;
+}
+
+function parseWithRegexV2(
+    text: string,
+    categories: ParseReferenceItem[],
+    accounts: ParseReferenceItem[],
+): ParsedFinanceV2 {
+    const normalized = normalizeTextEsBo(text);
+    const amount_bs = extractAmountCandidate(normalized);
+    const type = guessType(normalized);
+    const account_slug = slugFromTextMatch(normalized, accounts, ACCOUNT_ALIASES);
+    const category_slug = slugFromTextMatch(normalized, categories);
+
+    let confidence = 0.35;
+    if (type) confidence += 0.15;
+    if (amount_bs) confidence += 0.3;
+    if (account_slug) confidence += 0.1;
+    if (category_slug) confidence += 0.1;
 
     return {
-        type: isIncome ? "income" : "expense",
-        amount_bs: amount_bs && amount_bs > 0 ? amount_bs : null,
-        category_id: null,  // regex never guesses — let bot ask
-        account_id: null,   // regex never guesses — let bot ask
-        note: note.length > 0 ? note : text,
+        type,
+        amount_bs,
+        category_slug,
+        account_slug,
+        note: stripForNote(text),
+        confidence: clampConfidence(confidence),
+        reason: "regex_fallback",
         used_ai: false,
     };
 }
 
-/**
- * Context-aware AI parser using Cerebras.
- * Receives the real categories and accounts from DB so the AI can return
- * direct IDs instead of vague "hints".
- * Falls back to regex if API key missing or request fails.
- */
-export async function parseAndDecideWithAI(
-    text: string,
-    categories: Array<{ id: string; name: string }>,
-    accounts: Array<{ id: string; name: string }>,
-): Promise<AIDecision> {
-    const apiKey = process.env.CEREBRAS_API_KEY;
-    if (!apiKey) {
-        console.warn("[Finance] CEREBRAS_API_KEY not set — using regex fallback");
-        return parseWithRegexFallback(text);
+function extractJsonObject(content: string): Record<string, unknown> | null {
+    const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const raw = fenced?.[1] ?? content;
+    const direct = raw.trim();
+
+    try {
+        return JSON.parse(direct) as Record<string, unknown>;
+    } catch {
+        const firstBrace = raw.indexOf("{");
+        const lastBrace = raw.lastIndexOf("}");
+        if (firstBrace < 0 || lastBrace < 0 || lastBrace <= firstBrace) return null;
+        const slice = raw.slice(firstBrace, lastBrace + 1);
+        try {
+            return JSON.parse(slice) as Record<string, unknown>;
+        } catch {
+            return null;
+        }
     }
+}
 
-    const catList = categories.length
-        ? categories.map((c) => `"${c.name}" (id:${c.id})`).join(", ")
-        : "(sin categorías)";
-    const accList = accounts.length
-        ? accounts.map((a) => `"${a.name}" (id:${a.id})`).join(", ")
-        : "(sin cuentas)";
+export async function parseFinanceMessageV2(
+    text: string,
+    categories: ParseReferenceItem[],
+    accounts: ParseReferenceItem[],
+    options: ParseFinanceOptions = {},
+): Promise<ParsedFinanceV2> {
+    const apiKey = process.env.CEREBRAS_API_KEY;
+    if (!apiKey) return parseWithRegexV2(text, categories, accounts);
 
-    const prompt = `Eres el asistente de finanzas personales "Coki". Analiza este mensaje de WhatsApp.
+    const model = options.model ?? process.env.CEREBRAS_MODEL ?? "qwen-3-32b";
+    const normalized = normalizeTextEsBo(text);
+    const catList = categories.map((c) => `${c.slug}: ${c.name}`).join(", ") || "sin categorias";
+    const accList = accounts.map((a) => `${a.slug}: ${a.name}`).join(", ") || "sin cuentas";
 
-Mensaje del usuario: "${text}"
+    const systemPrompt = options.systemPrompt ?? [
+        "Eres un parser de finanzas de WhatsApp.",
+        "Responde SOLO JSON valido.",
+        "Nunca inventes slugs.",
+        "Si no estas seguro, usa null y baja confidence.",
+    ].join(" ");
 
-Categorías disponibles: ${catList}
-Cuentas disponibles: ${accList}
-
-Responde SOLO con JSON válido, sin ningún texto extra:
-{"type":"expense|income","amount_bs":number|null,"category_id":"id|null","account_id":"id|null","note":"string"}
-
-Reglas estrictas:
-- type: "income" SOLO si el mensaje habla de cobrar/recibir/sueldo/ingreso. Por defecto "expense".
-- amount_bs: el número del monto (sin símbolo de moneda). Si no está claro, null.
-- category_id: el id de la categoría más apropiada de la lista. Si no estás seguro, null.
-- account_id: el id de la cuenta SOLO si el mensaje la menciona explícitamente (ej: "qr", "transferencia" → cuenta QR; "efectivo", "cash" → cuenta Efectivo). Si no se menciona cuenta, SIEMPRE null.
-- note: descripción breve del gasto/ingreso en español.`;
+    const userPrompt = [
+        `Mensaje: "${text}"`,
+        `Mensaje normalizado: "${normalized}"`,
+        `Categorias disponibles: ${catList}`,
+        `Cuentas disponibles: ${accList}`,
+        "JSON estricto:",
+        '{"type":"expense|income|null","amount_bs":number|null,"category_slug":"string|null","account_slug":"string|null","note":"string","confidence":number,"reason":"string"}',
+        "Reglas:",
+        "- confidence entre 0 y 1",
+        "- account_slug solo si se menciona cuenta",
+        "- type income solo si hay senal de ingreso/cobro",
+    ].join("\n");
 
     try {
         const response = await fetch("https://api.cerebras.ai/v1/chat/completions", {
             method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
             body: JSON.stringify({
-                model: "llama3.1-8b",
-                messages: [{ role: "user", content: prompt }],
-                max_tokens: 200,
-                temperature: 0.1,
+                model,
+                temperature: 0,
+                max_tokens: 260,
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: userPrompt },
+                ],
             }),
         });
 
         if (!response.ok) {
             const errText = await response.text().catch(() => "");
-            console.error(`[Cerebras] HTTP ${response.status}: ${errText}`);
-            throw new Error(`Cerebras HTTP ${response.status}`);
+            console.error(`[Cerebras parser] HTTP ${response.status}: ${errText}`);
+            return parseWithRegexV2(text, categories, accounts);
         }
 
-        const data = await response.json() as { choices: Array<{ message: { content: string } }> };
-        const content = data.choices[0]?.message.content ?? "";
-        console.log(`[Cerebras] Raw: ${content}`);
+        const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+        const content = data.choices?.[0]?.message?.content ?? "";
+        const parsed = extractJsonObject(content);
+        if (!parsed) return parseWithRegexV2(text, categories, accounts);
 
-        const jsonMatch = content.match(/\{[\s\S]*?\}/);
-        if (!jsonMatch) throw new Error("No JSON in response");
-
-        const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
-
-        // Validate IDs exist in our lists — never trust hallucinated IDs
-        const catId = typeof parsed.category_id === "string" && categories.some((c) => c.id === parsed.category_id)
-            ? parsed.category_id : null;
-        const accId = typeof parsed.account_id === "string" && accounts.some((a) => a.id === parsed.account_id)
-            ? parsed.account_id : null;
+        const aiTypeRaw = parsed.type;
+        const type = aiTypeRaw === "income" || aiTypeRaw === "expense" ? aiTypeRaw : null;
         const amountRaw = parsed.amount_bs;
-        const amount_bs = typeof amountRaw === "number" && amountRaw > 0 ? amountRaw : null;
+        const amount_bs = typeof amountRaw === "number" && Number.isFinite(amountRaw) && amountRaw > 0
+            ? Number(amountRaw)
+            : null;
 
-        console.log(`[Cerebras] Parsed → type:${parsed.type} amount:${amount_bs} cat:${catId} acc:${accId}`);
+        const categorySlugRaw = typeof parsed.category_slug === "string" ? normalizeTextEsBo(parsed.category_slug) : null;
+        const accountSlugRaw = typeof parsed.account_slug === "string" ? normalizeTextEsBo(parsed.account_slug) : null;
+        const validCategorySlug = categorySlugRaw && categories.some((c) => normalizeTextEsBo(c.slug) === categorySlugRaw)
+            ? categories.find((c) => normalizeTextEsBo(c.slug) === categorySlugRaw)?.slug ?? null
+            : null;
+        const validAccountSlug = accountSlugRaw && accounts.some((a) => normalizeTextEsBo(a.slug) === accountSlugRaw)
+            ? accounts.find((a) => normalizeTextEsBo(a.slug) === accountSlugRaw)?.slug ?? null
+            : null;
+
+        const confidenceRaw = typeof parsed.confidence === "number" ? parsed.confidence : 0.45;
+        const note = typeof parsed.note === "string" && parsed.note.trim().length > 0
+            ? parsed.note.trim()
+            : stripForNote(text);
+        const reason = typeof parsed.reason === "string" ? parsed.reason : "ai_json";
 
         return {
-            type: parsed.type === "income" ? "income" : "expense",
+            type,
             amount_bs,
-            category_id: catId,
-            account_id: accId,
-            note: typeof parsed.note === "string" ? parsed.note : text,
+            category_slug: validCategorySlug,
+            account_slug: validAccountSlug,
+            note,
+            confidence: clampConfidence(confidenceRaw),
+            reason,
             used_ai: true,
         };
     } catch (err) {
-        console.error("[Cerebras] Failed, using regex fallback:", err);
-        return parseWithRegexFallback(text);
+        console.error("[Cerebras parser] Failed, using regex fallback:", err);
+        return parseWithRegexV2(text, categories, accounts);
     }
 }
 
-// Keep old parseWithAI as thin wrapper for any existing callers
-export async function parseWithAI(text: string): Promise<AIDecision & { account_hint: null; category_hint: null; confidence: number; used_ai: boolean; raw: string }> {
-    const result = await parseAndDecideWithAI(text, [], []);
-    return { ...result, account_hint: null, category_hint: null, confidence: result.used_ai ? 0.9 : 0.7, raw: text };
+export function parseWithRegex(text: string): AIDecision {
+    const parsed = parseWithRegexV2(text, [], []);
+    return {
+        type: parsed.type === "income" ? "income" : "expense",
+        amount_bs: parsed.amount_bs,
+        category_id: null,
+        account_id: null,
+        note: parsed.note,
+        used_ai: false,
+    };
+}
+
+export async function parseAndDecideWithAI(
+    text: string,
+    categories: Array<{ id: string; name: string; slug?: string }>,
+    accounts: Array<{ id: string; name: string; slug?: string }>,
+    options: ParseFinanceOptions = {},
+): Promise<AIDecision> {
+    const catRefs: ParseReferenceItem[] = categories.map((c) => ({
+        id: c.id,
+        name: c.name,
+        slug: c.slug ?? normalizeTextEsBo(c.name).replace(/\s+/g, "-"),
+    }));
+    const accRefs: ParseReferenceItem[] = accounts.map((a) => ({
+        id: a.id,
+        name: a.name,
+        slug: a.slug ?? normalizeTextEsBo(a.name).replace(/\s+/g, "-"),
+    }));
+
+    const parsed = await parseFinanceMessageV2(text, catRefs, accRefs, options);
+    const category = parsed.category_slug ? catRefs.find((c) => c.slug === parsed.category_slug) : null;
+    const account = parsed.account_slug ? accRefs.find((a) => a.slug === parsed.account_slug) : null;
+
+    return {
+        type: parsed.type === "income" ? "income" : "expense",
+        amount_bs: parsed.amount_bs,
+        category_id: category?.id ?? null,
+        account_id: account?.id ?? null,
+        note: parsed.note ?? text,
+        used_ai: parsed.used_ai,
+    };
+}
+
+export async function parseWithAI(text: string): Promise<AIDecision & {
+    account_hint: null;
+    category_hint: null;
+    confidence: number;
+    used_ai: boolean;
+    raw: string;
+}> {
+    const parsed = await parseFinanceMessageV2(text, [], []);
+    return {
+        type: parsed.type === "income" ? "income" : "expense",
+        amount_bs: parsed.amount_bs,
+        category_id: null,
+        account_id: null,
+        note: parsed.note,
+        account_hint: null,
+        category_hint: null,
+        confidence: parsed.confidence,
+        used_ai: parsed.used_ai,
+        raw: text,
+    };
 }

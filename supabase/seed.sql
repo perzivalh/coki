@@ -27,6 +27,7 @@ INSERT INTO settings (key, value, description) VALUES
   ('ai_model',            'qwen-3-32b',     'Modelo Cerebras para IA'),
   ('ai_system_prompt',    'Eres Coki, un asistente personal financiero. Responde de forma concisa.', 'Prompt sistema para IA'),
   ('feature_finance',     'true',           'Habilitar skill de finanzas'),
+  ('feature_nlu_v2',      'true',           'Habilitar parser conversacional NLU v2'),
   ('feature_tasks',       'false',          'Habilitar skill de tareas'),
   ('feature_docs',        'false',          'Habilitar skill de documentos')
 ON CONFLICT (key) DO NOTHING;

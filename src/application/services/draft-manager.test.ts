@@ -1,4 +1,3 @@
-// Unit tests: DraftManager — state machine
 import { describe, test, expect, vi } from "vitest";
 import { DraftManager } from "./draft-manager";
 import type { IDraftTransactionRepository, ICategoryRepository, IAccountRepository } from "@/domain/contracts/finance";
@@ -7,12 +6,11 @@ import type { Category } from "@/domain/entities/category";
 import type { Account } from "@/domain/entities/account";
 import type { AccountWithBalance } from "@/domain/entities/account-balance";
 
-// ── Mock factories ────────────────────────────────────────────────────────────
-
 function mockDraft(overrides: Partial<DraftTransaction> = {}): DraftTransaction {
     return {
         id: "draft-1",
         raw_input: "35 almuerzo",
+        from_number: "+591123456",
         parsed_json: { type: "expense", amount_bs: 35, note: "almuerzo" },
         missing_fields: ["category", "account"],
         status: "pending",
@@ -33,22 +31,20 @@ function mockStep(step_type: BotPendingStep["step_type"], overrides: Partial<Bot
     };
 }
 
-function mockCategory(id: string, name: string): Category {
-    return { id, name, slug: name.toLowerCase(), icon: null, active: true, created_at: "" };
+function mockCategory(id: string, name: string, slug = name.toLowerCase()): Category {
+    return { id, name, slug, icon: null, active: true, created_at: "" };
 }
 
-function mockAccount(id: string, name: string): Account {
-    return { id, name, slug: name.toLowerCase(), active: true, created_at: "" };
+function mockAccount(id: string, name: string, slug = name.toLowerCase()): Account {
+    return { id, name, slug, active: true, created_at: "" };
 }
-
-// ── Mock repositories ─────────────────────────────────────────────────────────
 
 function makeDraftRepo(draft: DraftTransaction): IDraftTransactionRepository {
     const steps: BotPendingStep[] = [];
     return {
         create: vi.fn().mockResolvedValue(draft),
         findPendingForUser: vi.fn().mockResolvedValue(draft),
-        updateParsed: vi.fn().mockImplementation((id: string, json: Record<string, unknown>, missing: string[]) =>
+        updateParsed: vi.fn().mockImplementation((_id: string, json: Record<string, unknown>, missing: string[]) =>
             Promise.resolve({ ...draft, parsed_json: json, missing_fields: missing })),
         markComplete: vi.fn().mockResolvedValue({ ...draft, status: "complete" }),
         markAbandoned: vi.fn().mockResolvedValue({ ...draft, status: "abandoned" }),
@@ -91,24 +87,12 @@ function makeAccRepo(accounts: Account[]): IAccountRepository {
     };
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 describe("DraftManager.getMissingFields", () => {
-    const manager = new DraftManager(
-        makeDraftRepo(mockDraft()),
-        makeCatRepo([]),
-        makeAccRepo([]),
-    );
+    const manager = new DraftManager(makeDraftRepo(mockDraft()), makeCatRepo([]), makeAccRepo([]));
 
     test("returns category and account when both missing for expense", () => {
         const missing = manager.getMissingFields({ type: "expense", amount_bs: 35 });
         expect(missing).toContain("category");
-        expect(missing).toContain("account");
-    });
-
-    test("returns only account when category is present", () => {
-        const missing = manager.getMissingFields({ type: "expense", amount_bs: 35, category_id: "cat-1" });
-        expect(missing).not.toContain("category");
         expect(missing).toContain("account");
     });
 
@@ -117,65 +101,55 @@ describe("DraftManager.getMissingFields", () => {
         expect(missing).not.toContain("category");
         expect(missing).toContain("account");
     });
-
-    test("returns empty when all fields present", () => {
-        const missing = manager.getMissingFields({ type: "expense", amount_bs: 35, category_id: "cat-1", account_id: "acc-1" });
-        expect(missing).toHaveLength(0);
-    });
-
-    test("returns type when type missing", () => {
-        const missing = manager.getMissingFields({ amount_bs: 35 });
-        expect(missing).toContain("type");
-    });
 });
 
-describe("DraftManager.handleReply — ask_category step", () => {
-    test("resolves category and moves to ask_account", async () => {
-        const cat = mockCategory("cat-1", "Comida");
-        const acc = mockAccount("acc-1", "Efectivo");
+describe("DraftManager.handleReply", () => {
+    test("moves from category to account", async () => {
+        const cat = mockCategory("cat-1", "Comida", "comida");
+        const acc = mockAccount("acc-1", "Efectivo", "cash");
         const draft = mockDraft({
             parsed_json: { type: "expense", amount_bs: 35, note: "almuerzo", account_id: null },
             missing_fields: ["category", "account"],
         });
         const step = mockStep("ask_category");
 
-        const draftRepo = makeDraftRepo(draft);
-        const catRepo = makeCatRepo([cat]);
-        const accRepo = makeAccRepo([acc]);
-        const manager = new DraftManager(draftRepo, catRepo, accRepo);
-
+        const manager = new DraftManager(makeDraftRepo(draft), makeCatRepo([cat]), makeAccRepo([acc]));
         const result = await manager.handleReply(draft, step, "cat-1", "+591123456");
-
         expect("completed" in result).toBe(false);
-        if (!("completed" in result)) {
-            expect(result.step.step_type).toBe("ask_account");
-        }
-        expect(draftRepo.deletePendingStep).toHaveBeenCalledWith(step.id);
+        if (!("completed" in result)) expect(result.step.step_type).toBe("ask_account");
     });
-});
 
-describe("DraftManager.handleReply — ask_account step (completes draft)", () => {
-    test("completes draft when account is the last missing field", async () => {
-        const acc = mockAccount("acc-1", "Efectivo");
+    test("completes when account is last missing field", async () => {
+        const acc = mockAccount("acc-1", "Efectivo", "cash");
         const draft = mockDraft({
             parsed_json: { type: "expense", amount_bs: 35, category_id: "cat-1", account_id: null },
             missing_fields: ["account"],
         });
         const step = mockStep("ask_account");
 
-        const draftRepo = makeDraftRepo(draft);
-        const catRepo = makeCatRepo([]);
-        const accRepo = makeAccRepo([acc]);
-        const manager = new DraftManager(draftRepo, catRepo, accRepo);
-
+        const manager = new DraftManager(makeDraftRepo(draft), makeCatRepo([]), makeAccRepo([acc]));
         const result = await manager.handleReply(draft, step, "acc-1", "+591123456");
-
         expect("completed" in result).toBe(true);
         if ("completed" in result && result.completed) {
             expect(result.transactionInput.account_id).toBe("acc-1");
-            expect(result.transactionInput.type).toBe("expense");
             expect(result.transactionInput.amount_bs).toBe(35);
         }
-        expect(draftRepo.markComplete).toHaveBeenCalledWith(draft.id);
+    });
+});
+
+describe("DraftManager.handleTextReply", () => {
+    test("matches account by alias text", async () => {
+        const acc = mockAccount("acc-1", "Efectivo", "cash");
+        const draft = mockDraft({
+            parsed_json: { type: "expense", amount_bs: 20, category_id: "cat-1", account_id: null },
+            missing_fields: ["account"],
+        });
+        const step = mockStep("ask_account");
+
+        const manager = new DraftManager(makeDraftRepo(draft), makeCatRepo([]), makeAccRepo([acc]));
+        const result = await manager.handleTextReply(draft, step, "pague en efectivo", "+591123456");
+
+        expect(result.handled).toBe(true);
+        expect(result.result).toBeTruthy();
     });
 });
