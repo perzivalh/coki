@@ -13,6 +13,7 @@ import {
     SupabaseAccountRepository,
 } from "@/infrastructure/db/supabase/category-account.repository";
 import { SupabaseAccountBalanceRepository } from "@/infrastructure/db/supabase/account-balance.repository";
+import { SupabaseCategoryAliasRepository } from "@/infrastructure/db/supabase/category-alias.repository";
 import { sendWhatsAppMessage } from "@/application/services/whatsapp-sender";
 import { supabaseService } from "@/infrastructure/db/supabase/client";
 
@@ -173,7 +174,8 @@ async function handleInteractiveReply(
     const { draft, step } = context;
     const catRepo = new SupabaseCategoryRepository();
     const accRepo = new SupabaseAccountRepository();
-    const draftManager = new DraftManager(draftRepo, catRepo, accRepo);
+    const aliasRepo = new SupabaseCategoryAliasRepository();
+    const draftManager = new DraftManager(draftRepo, catRepo, accRepo, aliasRepo);
 
     const result = await draftManager.handleReply(draft, step, selectedId, from);
 

@@ -3,12 +3,14 @@ import type {
     IAccountRepository,
     IDraftTransactionRepository,
     CreateTransactionInput,
+    ICategoryAliasRepository,
 } from "@/domain/contracts/finance";
 import type { DraftTransaction, BotPendingStep, StepType } from "@/domain/entities/draft-transaction";
 import type { Category } from "@/domain/entities/category";
 import type { Account } from "@/domain/entities/account";
 import { normalizeTextEsBo } from "./conversation-intent";
 import { sendInteractiveButtons, sendInteractiveList } from "./whatsapp-interactive";
+import { learnCategoryAliasesFromText } from "./category-alias-learning";
 
 export type MissingField = "type" | "category" | "account";
 
@@ -56,6 +58,7 @@ export class DraftManager {
         private draftRepo: IDraftTransactionRepository,
         private catRepo: ICategoryRepository,
         private accRepo: IAccountRepository,
+        private aliasRepo?: ICategoryAliasRepository,
     ) { }
 
     async startDraft(
@@ -97,6 +100,14 @@ export class DraftManager {
                 break;
             case "ask_category":
                 updatedParsed.category_id = selectedId === "none" ? null : selectedId;
+                if (selectedId !== "none" && this.aliasRepo) {
+                    await learnCategoryAliasesFromText({
+                        aliasRepo: this.aliasRepo,
+                        categoryId: selectedId,
+                        rawInput: draft.raw_input,
+                        note: typeof currentParsed.note === "string" ? currentParsed.note : null,
+                    });
+                }
                 break;
             case "ask_account":
                 updatedParsed.account_id = selectedId;

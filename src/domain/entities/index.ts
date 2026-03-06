@@ -11,3 +11,4 @@ export * from "./income-source";
 export * from "./fixed-bill";
 export * from "./account-balance";
 export * from "./draft-transaction";
+export * from "./category-alias";

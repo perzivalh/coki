@@ -20,6 +20,7 @@ export interface ParsedFinanceV2 {
 export interface ParseFinanceOptions {
     model?: string;
     systemPrompt?: string;
+    categoryAliasesBySlug?: Record<string, string[]>;
 }
 
 export interface AIDecision {
@@ -47,6 +48,96 @@ const ACCOUNT_ALIASES: Record<string, string[]> = {
     qr: ["qr", "transferencia", "transfer", "banco", "tarjeta"],
 };
 
+const DEFAULT_CATEGORY_ALIASES: Record<string, string[]> = {
+    comida: [
+        "almuerzo",
+        "desayuno",
+        "cena",
+        "merienda",
+        "snack",
+        "gaseosa",
+        "refresco",
+        "saltena",
+        "saltenas",
+        "chupete",
+        "dulce",
+        "cafe",
+        "pizza",
+        "hamburguesa",
+        "helado",
+        "pan",
+        "pollo",
+        "jugo",
+    ],
+    transporte: [
+        "pasaje",
+        "micro",
+        "trufi",
+        "taxi",
+        "uber",
+        "indrive",
+        "gasolina",
+        "nafta",
+        "combustible",
+        "parqueo",
+        "peaje",
+    ],
+    salud: [
+        "farmacia",
+        "medicina",
+        "medicamento",
+        "doctor",
+        "consulta",
+        "dentista",
+        "vitamina",
+        "suplemento",
+        "proteina",
+        "creatina",
+        "preentreno",
+        "ibuprofeno",
+        "paracetamol",
+    ],
+    compras: [
+        "ropa",
+        "polera",
+        "pantalon",
+        "zapato",
+        "papel",
+        "papel higienico",
+        "cuaderno",
+        "lapiz",
+        "jabon",
+        "shampoo",
+        "detergente",
+        "mercado",
+    ],
+    ocio: [
+        "chela",
+        "cerveza",
+        "trago",
+        "tragos",
+        "cine",
+        "juego",
+        "steam",
+        "spotify",
+        "netflix",
+        "salida",
+    ],
+    servicios: [
+        "luz",
+        "agua",
+        "internet",
+        "wifi",
+        "telefono",
+        "celular",
+        "recarga",
+        "gas",
+        "alquiler",
+        "factura",
+        "suscripcion",
+    ],
+};
+
 function clampConfidence(confidence: number): number {
     if (!Number.isFinite(confidence)) return 0;
     return Math.max(0, Math.min(1, confidence));
@@ -62,7 +153,26 @@ function stripForNote(text: string): string {
     return text.replace(/\s+/g, " ").trim();
 }
 
-function slugFromTextMatch(text: string, items: ParseReferenceItem[], aliases?: Record<string, string[]>): string | null {
+function buildCategoryAliases(
+    categories: ParseReferenceItem[],
+    learnedBySlug: Record<string, string[]> = {},
+): Record<string, string[]> {
+    const aliases: Record<string, string[]> = {};
+    for (const category of categories) {
+        const defaults = DEFAULT_CATEGORY_ALIASES[category.slug] ?? [];
+        const learned = learnedBySlug[category.slug] ?? [];
+        const merged = [...defaults, ...learned].map((value) => normalizeTextEsBo(value));
+        const deduped = Array.from(new Set(merged)).filter((value) => value.length > 0);
+        if (deduped.length > 0) aliases[category.slug] = deduped;
+    }
+    return aliases;
+}
+
+function resolveSlugMatch(
+    text: string,
+    items: ParseReferenceItem[],
+    aliases?: Record<string, string[]>,
+): { slug: string; score: number } | null {
     const normalized = normalizeTextEsBo(text);
     let best: { slug: string; score: number } | null = null;
 
@@ -86,19 +196,56 @@ function slugFromTextMatch(text: string, items: ParseReferenceItem[], aliases?: 
     }
 
     if (!best || best.score < 0.7) return null;
-    return best.slug;
+    return best;
+}
+
+function slugFromTextMatch(text: string, items: ParseReferenceItem[], aliases?: Record<string, string[]>): string | null {
+    return resolveSlugMatch(text, items, aliases)?.slug ?? null;
+}
+
+function applyCategoryHeuristic(
+    current: ParsedFinanceV2,
+    normalizedText: string,
+    categories: ParseReferenceItem[],
+    learnedAliasesBySlug: Record<string, string[]> = {},
+): ParsedFinanceV2 {
+    const categoryAliases = buildCategoryAliases(categories, learnedAliasesBySlug);
+    const heuristic = resolveSlugMatch(normalizedText, categories, categoryAliases);
+    if (!heuristic) return current;
+
+    if (!current.category_slug) {
+        return {
+            ...current,
+            category_slug: heuristic.slug,
+            confidence: clampConfidence(Math.max(current.confidence, heuristic.score >= 0.95 ? 0.84 : 0.74)),
+            reason: `${current.reason}+category_alias`,
+        };
+    }
+
+    if (current.category_slug !== heuristic.slug && current.confidence < 0.75 && heuristic.score >= 0.88) {
+        return {
+            ...current,
+            category_slug: heuristic.slug,
+            confidence: clampConfidence(Math.max(current.confidence, 0.78)),
+            reason: `${current.reason}+category_alias_override`,
+        };
+    }
+
+    return current;
 }
 
 function parseWithRegexV2(
     text: string,
     categories: ParseReferenceItem[],
     accounts: ParseReferenceItem[],
+    learnedAliasesBySlug: Record<string, string[]> = {},
 ): ParsedFinanceV2 {
     const normalized = normalizeTextEsBo(text);
     const amount_bs = extractAmountCandidate(normalized);
     const type = guessType(normalized);
     const account_slug = slugFromTextMatch(normalized, accounts, ACCOUNT_ALIASES);
-    const category_slug = slugFromTextMatch(normalized, categories);
+    const categoryAliases = buildCategoryAliases(categories, learnedAliasesBySlug);
+    const category_slug = slugFromTextMatch(normalized, categories, categoryAliases);
 
     let confidence = 0.35;
     if (type) confidence += 0.15;
@@ -106,7 +253,7 @@ function parseWithRegexV2(
     if (account_slug) confidence += 0.1;
     if (category_slug) confidence += 0.1;
 
-    return {
+    return applyCategoryHeuristic({
         type,
         amount_bs,
         category_slug,
@@ -115,7 +262,7 @@ function parseWithRegexV2(
         confidence: clampConfidence(confidence),
         reason: "regex_fallback",
         used_ai: false,
-    };
+    }, normalized, categories, learnedAliasesBySlug);
 }
 
 function extractJsonObject(content: string): Record<string, unknown> | null {
@@ -145,11 +292,15 @@ export async function parseFinanceMessageV2(
     options: ParseFinanceOptions = {},
 ): Promise<ParsedFinanceV2> {
     const apiKey = process.env.CEREBRAS_API_KEY;
-    if (!apiKey) return parseWithRegexV2(text, categories, accounts);
+    if (!apiKey) return parseWithRegexV2(text, categories, accounts, options.categoryAliasesBySlug);
 
     const model = options.model ?? process.env.CEREBRAS_MODEL ?? "qwen-3-32b";
     const normalized = normalizeTextEsBo(text);
-    const catList = categories.map((c) => `${c.slug}: ${c.name}`).join(", ") || "sin categorias";
+    const categoryAliases = buildCategoryAliases(categories, options.categoryAliasesBySlug);
+    const catList = categories.map((c) => {
+        const hints = categoryAliases[c.slug]?.slice(0, 6).join(", ");
+        return hints ? `${c.slug}: ${c.name} (ej: ${hints})` : `${c.slug}: ${c.name}`;
+    }).join(", ") || "sin categorias";
     const accList = accounts.map((a) => `${a.slug}: ${a.name}`).join(", ") || "sin cuentas";
 
     const systemPrompt = options.systemPrompt ?? [
@@ -170,6 +321,8 @@ export async function parseFinanceMessageV2(
         "- confidence entre 0 y 1",
         "- account_slug solo si se menciona cuenta",
         "- type income solo si hay senal de ingreso/cobro",
+        "- category_slug debe intentar mapear palabras coloquiales al mejor slug disponible",
+        "- si el mensaje menciona un producto o consumo, prefiere la categoria mas cercana antes que null",
     ].join("\n");
 
     try {
@@ -193,13 +346,13 @@ export async function parseFinanceMessageV2(
         if (!response.ok) {
             const errText = await response.text().catch(() => "");
             console.error(`[Cerebras parser] HTTP ${response.status}: ${errText}`);
-            return parseWithRegexV2(text, categories, accounts);
+            return parseWithRegexV2(text, categories, accounts, options.categoryAliasesBySlug);
         }
 
         const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
         const content = data.choices?.[0]?.message?.content ?? "";
         const parsed = extractJsonObject(content);
-        if (!parsed) return parseWithRegexV2(text, categories, accounts);
+        if (!parsed) return parseWithRegexV2(text, categories, accounts, options.categoryAliasesBySlug);
 
         const aiTypeRaw = parsed.type;
         const type = aiTypeRaw === "income" || aiTypeRaw === "expense" ? aiTypeRaw : null;
@@ -223,7 +376,7 @@ export async function parseFinanceMessageV2(
             : stripForNote(text);
         const reason = typeof parsed.reason === "string" ? parsed.reason : "ai_json";
 
-        return {
+        return applyCategoryHeuristic({
             type,
             amount_bs,
             category_slug: validCategorySlug,
@@ -232,10 +385,10 @@ export async function parseFinanceMessageV2(
             confidence: clampConfidence(confidenceRaw),
             reason,
             used_ai: true,
-        };
+        }, normalized, categories, options.categoryAliasesBySlug);
     } catch (err) {
         console.error("[Cerebras parser] Failed, using regex fallback:", err);
-        return parseWithRegexV2(text, categories, accounts);
+        return parseWithRegexV2(text, categories, accounts, options.categoryAliasesBySlug);
     }
 }
 

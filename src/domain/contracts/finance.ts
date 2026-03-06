@@ -8,6 +8,7 @@ import type { IncomeSource } from "../entities/income-source";
 import type { FixedBill, FixedBillWithAccount } from "../entities/fixed-bill";
 import type { AccountBalance, AccountWithBalance, BalanceSource } from "../entities/account-balance";
 import type { DraftTransaction, BotPendingStep, StepType } from "../entities/draft-transaction";
+import type { CategoryAlias, CategoryAliasSource } from "../entities/category-alias";
 
 export interface CreateTransactionInput {
     type: TransactionType;
@@ -92,6 +93,11 @@ export interface ICategoryRepository {
     create(input: { name: string; slug: string; icon?: string }): Promise<Category>;
     update(id: string, input: Partial<{ name: string; icon: string; active: boolean }>): Promise<Category>;
     delete(id: string): Promise<void>;
+}
+
+export interface ICategoryAliasRepository {
+    upsertAlias(category_id: string, alias_text: string, source?: CategoryAliasSource): Promise<CategoryAlias>;
+    listByCategoryIds(categoryIds: string[]): Promise<CategoryAlias[]>;
 }
 
 export interface IAccountRepository {

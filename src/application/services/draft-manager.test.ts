@@ -1,6 +1,6 @@
 import { describe, test, expect, vi } from "vitest";
 import { DraftManager } from "./draft-manager";
-import type { IDraftTransactionRepository, ICategoryRepository, IAccountRepository } from "@/domain/contracts/finance";
+import type { IDraftTransactionRepository, ICategoryRepository, IAccountRepository, ICategoryAliasRepository } from "@/domain/contracts/finance";
 import type { DraftTransaction, BotPendingStep } from "@/domain/entities/draft-transaction";
 import type { Category } from "@/domain/entities/category";
 import type { Account } from "@/domain/entities/account";
@@ -151,5 +151,38 @@ describe("DraftManager.handleTextReply", () => {
 
         expect(result.handled).toBe(true);
         expect(result.result).toBeTruthy();
+    });
+});
+
+describe("DraftManager alias learning", () => {
+    test("learns aliases when category is selected manually", async () => {
+        const cat = mockCategory("cat-1", "Comida", "comida");
+        const acc = mockAccount("acc-1", "Efectivo", "cash");
+        const draft = mockDraft({
+            raw_input: "3bs papel efectivo",
+            parsed_json: { type: "expense", amount_bs: 3, note: "papel", account_id: "acc-1" },
+            missing_fields: ["category"],
+        });
+        const step = mockStep("ask_category");
+
+        const aliasRepo: ICategoryAliasRepository = {
+            upsertAlias: vi.fn().mockResolvedValue({
+                id: "alias-1",
+                category_id: "cat-1",
+                alias_text: "papel",
+                normalized_alias: "papel",
+                source: "draft_category_selection",
+                usage_count: 1,
+                created_at: "",
+                updated_at: "",
+                last_seen_at: "",
+            }),
+            listByCategoryIds: vi.fn().mockResolvedValue([]),
+        };
+
+        const manager = new DraftManager(makeDraftRepo(draft), makeCatRepo([cat]), makeAccRepo([acc]), aliasRepo);
+        await manager.handleReply(draft, step, "cat-1", "+591123456");
+
+        expect(aliasRepo.upsertAlias).toHaveBeenCalled();
     });
 });

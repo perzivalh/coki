@@ -18,6 +18,7 @@ import {
     SupabaseCategoryRepository,
 } from "@/infrastructure/db/supabase/category-account.repository";
 import { SupabaseAccountBalanceRepository } from "@/infrastructure/db/supabase/account-balance.repository";
+import { SupabaseCategoryAliasRepository } from "@/infrastructure/db/supabase/category-alias.repository";
 
 export interface ConversationInput {
     text: string;
@@ -93,7 +94,8 @@ export class ConversationOrchestrator {
 
         const catRepo = new SupabaseCategoryRepository();
         const accRepo = new SupabaseAccountRepository();
-        const draftManager = new DraftManager(draftRepo, catRepo, accRepo);
+        const aliasRepo = new SupabaseCategoryAliasRepository();
+        const draftManager = new DraftManager(draftRepo, catRepo, accRepo, aliasRepo);
 
         if (isCancelCommand(normalized)) {
             await draftRepo.markAbandoned(context.draft.id);

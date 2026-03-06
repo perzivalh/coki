@@ -13,6 +13,7 @@ import {
 import { SupabaseConfigRepository } from "@/infrastructure/db/supabase/config.repository";
 import { SupabaseBudgetRepository } from "@/infrastructure/db/supabase/budget.repository";
 import { SupabaseDraftTransactionRepository } from "@/infrastructure/db/supabase/draft-transaction.repository";
+import { SupabaseCategoryAliasRepository } from "@/infrastructure/db/supabase/category-alias.repository";
 import { ConfigResolver } from "@/application/services/config-resolver";
 import { BudgetChecker } from "@/application/services/budget-checker";
 import { SupabaseAccountBalanceRepository } from "@/infrastructure/db/supabase/account-balance.repository";
@@ -54,14 +55,31 @@ export async function handleFinanceMessage(input: FinanceHandlerInput): Promise<
         slug: a.slug,
     }));
 
+    const learnedAliasesBySlug: Record<string, string[]> = {};
+    try {
+        const aliasRepo = new SupabaseCategoryAliasRepository();
+        const aliases = await aliasRepo.listByCategoryIds(categories.map((c) => c.id));
+        const categoryIdToSlug = new Map(categories.map((c) => [c.id, c.slug]));
+        for (const alias of aliases) {
+            const slug = categoryIdToSlug.get(alias.category_id);
+            if (!slug) continue;
+            if (!learnedAliasesBySlug[slug]) learnedAliasesBySlug[slug] = [];
+            if (!learnedAliasesBySlug[slug].includes(alias.normalized_alias)) {
+                learnedAliasesBySlug[slug].push(alias.normalized_alias);
+            }
+        }
+    } catch (err) {
+        console.error("[Finance] Failed to load learned category aliases:", err);
+    }
+
     const parsed = featureNluV2
         ? await parseFinanceMessageV2(
             text,
             categoryRefs,
             accountRefs,
-            { model: aiModel, systemPrompt: aiSystemPrompt },
+            { model: aiModel, systemPrompt: aiSystemPrompt, categoryAliasesBySlug: learnedAliasesBySlug },
         )
-        : await parseLegacyParser(text, categories, accounts, aiModel, aiSystemPrompt);
+        : await parseLegacyParser(text, categories, accounts, aiModel, aiSystemPrompt, learnedAliasesBySlug);
 
     if (!parsed.amount_bs) {
         await sendWhatsAppMessage(
@@ -84,7 +102,8 @@ export async function handleFinanceMessage(input: FinanceHandlerInput): Promise<
 
     if (missingCategory || missingAccount || parsed.confidence < REVIEW_CONFIDENCE) {
         const draftRepo = new SupabaseDraftTransactionRepository();
-        const draftManager = new DraftManager(draftRepo, catRepo, accRepo);
+        const aliasRepo = new SupabaseCategoryAliasRepository();
+        const draftManager = new DraftManager(draftRepo, catRepo, accRepo, aliasRepo);
         await draftManager.startDraft(
             text,
             {
@@ -201,10 +220,12 @@ async function parseLegacyParser(
     accounts: Array<{ id: string; name: string; slug: string }>,
     model: string,
     systemPrompt?: string,
+    learnedAliasesBySlug: Record<string, string[]> = {},
 ) {
     const legacy = await parseAndDecideWithAI(text, categories, accounts, {
         model,
         systemPrompt,
+        categoryAliasesBySlug: learnedAliasesBySlug,
     });
     const legacyCategory = legacy.category_id ? categories.find((c) => c.id === legacy.category_id) ?? null : null;
     const legacyAccount = legacy.account_id ? accounts.find((a) => a.id === legacy.account_id) ?? null : null;
